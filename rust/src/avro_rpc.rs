@@ -1,17 +1,12 @@
-use apache_avro::{
-    Schema, from_avro_datum, from_avro_datum_schemata, to_avro_datum, to_avro_datum_schemata,
-};
-
+use crate::transport::Transport;
+use apache_avro::Schema;
+use apache_avro::reader::datum::GenericDatumReader;
 use apache_avro::types::Value;
-
+use apache_avro::writer::datum::GenericDatumWriter;
 use md5::{Digest, Md5};
-
 use serde_json::Value as JsonValue;
-
 use std::collections::HashMap;
 use std::io::Cursor;
-
-use crate::transport::Transport;
 
 type RpcResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
@@ -641,8 +636,11 @@ impl<T: Transport> AvroRpcClient<T> {
             ),
             ("meta".to_string(), Value::Union(0, Box::new(Value::Null))),
         ]);
+        let result = GenericDatumWriter::builder(&schema)
+            .build()?
+            .write_value_to_vec(value)?;
 
-        Ok(to_avro_datum(&schema, value)?)
+        Ok(result)
     }
 
     /*
@@ -657,7 +655,10 @@ impl<T: Transport> AvroRpcClient<T> {
     ) -> RpcResult<HandshakeResponse> {
         let schema = Schema::parse_str(HANDSHAKE_RESPONSE_SCHEMA_JSON)?;
 
-        let value = from_avro_datum(&schema, cursor, None)?;
+        let value = GenericDatumReader::builder(&schema)
+            .maybe_reader_schema(None)
+            .build()?
+            .read_value(cursor)?;
 
         let fields = match value {
             Value::Record(fields) => fields,
@@ -690,18 +691,15 @@ impl<T: Transport> AvroRpcClient<T> {
                  * ------------------------------------------------------
                  */
                 "serverHash" => {
-                    if let Value::Union(_, boxed) = value {
-                        if let Value::Fixed(_, bytes) = *boxed {
-                            if bytes.len() != 16 {
-                                return Err("serverHash must contain 16 bytes".into());
-                            }
-
-                            let mut hash = [0u8; 16];
-
-                            hash.copy_from_slice(&bytes);
-
-                            server_hash = Some(hash);
+                    if let Value::Union(_, boxed) = value
+                        && let Value::Fixed(_, bytes) = *boxed
+                    {
+                        if bytes.len() != 16 {
+                            return Err("serverHash must contain 16 bytes".into());
                         }
+                        let mut hash = [0u8; 16];
+                        hash.copy_from_slice(&bytes);
+                        server_hash = Some(hash);
                     }
                 }
 
@@ -769,7 +767,9 @@ impl<T: Transport> AvroRpcClient<T> {
 
         let metadata_schema = Schema::parse_str(MAP_BYTES_SCHEMA_JSON)?;
 
-        let metadata = to_avro_datum(&metadata_schema, Value::Map(HashMap::new()))?;
+        let metadata = GenericDatumWriter::builder(&metadata_schema)
+            .build()?
+            .write_value_to_vec(Value::Map(HashMap::new()))?;
 
         /*
          * --------------------------------------------------------------
@@ -777,7 +777,10 @@ impl<T: Transport> AvroRpcClient<T> {
          * --------------------------------------------------------------
          */
 
-        let method_bytes = to_avro_datum(&Schema::String, Value::String(method.to_string()))?;
+        let method_bytes = GenericDatumWriter::builder(&Schema::String)
+            .build()?
+            .write_value_to_vec(Value::String(method.to_string()))?;
+        //let method_bytes = to_avro_datum(&Schema::String, Value::String(method.to_string()))?;
 
         /*
          * --------------------------------------------------------------
@@ -785,8 +788,12 @@ impl<T: Transport> AvroRpcClient<T> {
          * --------------------------------------------------------------
          */
 
-        let request_bytes =
-            to_avro_datum_schemata(request_schema, self.protocol.schemata_refs(), request)?;
+        let request_bytes = GenericDatumWriter::builder(request_schema)
+            .schemata(self.protocol.schemata_refs())?
+            .build()?
+            .write_value_to_vec(request)?;
+        //let request_bytes =
+        //   to_avro_datum_schemata(request_schema, self.protocol.schemata_refs(), request)?;
 
         /*
          * --------------------------------------------------------------
@@ -798,9 +805,7 @@ impl<T: Transport> AvroRpcClient<T> {
             Vec::with_capacity(metadata.len() + method_bytes.len() + request_bytes.len());
 
         result.extend_from_slice(&metadata);
-
         result.extend_from_slice(&method_bytes);
-
         result.extend_from_slice(&request_bytes);
 
         Ok(result)
@@ -828,7 +833,11 @@ impl<T: Transport> AvroRpcClient<T> {
 
         let metadata_schema = Schema::parse_str(MAP_BYTES_SCHEMA_JSON)?;
 
-        let _metadata = from_avro_datum(&metadata_schema, &mut cursor, None)?;
+        let _metadata = GenericDatumReader::builder(&metadata_schema)
+            .maybe_reader_schema(None)
+            .build()?
+            .read_value(&mut cursor)?;
+        //let _metadata = from_avro_datum(&metadata_schema, &mut cursor, None)?;
 
         /*
          * --------------------------------------------------------------
@@ -836,7 +845,11 @@ impl<T: Transport> AvroRpcClient<T> {
          * --------------------------------------------------------------
          */
 
-        let error_value = from_avro_datum(&Schema::Boolean, &mut cursor, None)?;
+        let error_value = GenericDatumReader::builder(&Schema::Boolean)
+            .maybe_reader_schema(None)
+            .build()?
+            .read_value(&mut cursor)?;
+        //let error_value = from_avro_datum(&Schema::Boolean, &mut cursor, None)?;
 
         let is_error = match error_value {
             Value::Boolean(value) => value,
@@ -853,7 +866,11 @@ impl<T: Transport> AvroRpcClient<T> {
          */
 
         if is_error {
-            let error = from_avro_datum(&Schema::String, &mut cursor, None)?;
+            let error = GenericDatumReader::builder(&Schema::String)
+                .maybe_reader_schema(None)
+                .build()?
+                .read_value(&mut cursor)?;
+            //let error = from_avro_datum(&Schema::String, &mut cursor, None)?;
 
             return Err(format!("remote Avro RPC error from '{method}': {error:?}").into());
         }
@@ -863,13 +880,19 @@ impl<T: Transport> AvroRpcClient<T> {
          * Successful response
          * --------------------------------------------------------------
          */
-
+        let result = GenericDatumReader::builder(response_schema)
+            .writer_schemata(self.protocol.schemata_refs())?
+            .maybe_reader_schema(None)
+            .build()?
+            .read_value(&mut cursor)?;
+        /*
         let result = from_avro_datum_schemata(
             response_schema,
             self.protocol.schemata_refs(),
             &mut cursor,
             None,
         )?;
+        */
 
         Ok(result)
     }

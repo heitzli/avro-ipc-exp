@@ -7,6 +7,8 @@ type ClientResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 const PROTOCOL: &str = include_str!("../../protocol/example.avpr");
 
+// This is a handwritten stub for the avro protocol, for the moment ignore code gen and creat such clients by hand.
+
 pub struct ExampleServiceClient<T: Transport> {
     rpc: AvroRpcClient<T>,
 }
