@@ -91,6 +91,20 @@ impl<T: Transport> ExampleServiceClient<T> {
         Self::extract_add_response(response)
     }
 
+    pub fn test(&mut self, a: i32, b: i32) -> ClientResult<i32> {
+        let request = Value::Record(vec![(
+            "request".to_string(),
+            Value::Record(vec![
+                ("a".to_string(), Value::Int(a)),
+                ("b".to_string(), Value::Int(b)),
+            ]),
+        )]);
+
+        let response = self.rpc.call("test", request)?;
+
+        Self::extract_test_response(response)
+    }
+
     /*
      * ======================================================================
      * Extract echo response
@@ -129,6 +143,26 @@ impl<T: Transport> ExampleServiceClient<T> {
                 for (name, value) in fields {
                     if name == "result" {
                         if let Value::Long(result) = value {
+                            return Ok(result);
+                        }
+
+                        return Err("add response field 'result' has invalid type".into());
+                    }
+                }
+
+                Err("add response missing 'result' field".into())
+            }
+
+            other => Err(format!("invalid add response: {other:?}").into()),
+        }
+    }
+
+    fn extract_test_response(response: Value) -> ClientResult<i32> {
+        match response {
+            Value::Record(fields) => {
+                for (name, value) in fields {
+                    if name == "result" {
+                        if let Value::Int(result) = value {
                             return Ok(result);
                         }
 

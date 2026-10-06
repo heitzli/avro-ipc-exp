@@ -18,7 +18,19 @@ protocol ExampleService {
     long result;
   }
 
+  record TestRequest {
+    int a;
+    int b;
+  }
+
+  record TestResponse {
+    int result;
+  }
+
   EchoResponse echo(EchoRequest request);
 
   AddResponse add(AddRequest request);
+
+  TestResponse test(TestRequest request);
+
 }

@@ -39,8 +39,18 @@ class ExampleResponder(avro.ipc.Responder):
         if method == "add":
             return self.add(request)
 
+        if method == "test":
+            return self.test(request)
+
         # TODO maybe rather return an error response and ignore request instead of killing the server
         raise RuntimeError(f"Unknown RPC method: {method}")
+
+    def test(self, request: RequestDict) -> ResultDict:
+        a = request["request"]["a"]
+        b = request["request"]["b"]
+
+        result = a - b
+        return {"result": result}
 
     def echo(self, request: RequestDict) -> ResultDict:
         message = request["request"]["message"]

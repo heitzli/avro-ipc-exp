@@ -1,30 +1,23 @@
-import org.apache.avro.Protocol;
-import org.apache.avro.generic.GenericData;
-import org.apache.avro.generic.GenericRecord;
-import org.apache.avro.ipc.generic.GenericResponder;
-
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
-
+import java.net.StandardProtocolFamily;
+import java.net.UnixDomainSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.Channels;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
-
-import java.net.StandardProtocolFamily;
-import java.net.UnixDomainSocketAddress;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
-
 import java.util.List;
-
+import org.apache.avro.Protocol;
+import org.apache.avro.generic.GenericData;
+import org.apache.avro.generic.GenericRecord;
+import org.apache.avro.ipc.generic.GenericResponder;
 
 /**
  * Java implementation of the ExampleService Avro RPC server.
@@ -42,18 +35,13 @@ import java.util.List;
  */
 public class ExampleServer {
 
-    private static final String PROTOCOL_FILE =
-            "../protocol/example.avpr";
+    private static final String PROTOCOL_FILE = "../protocol/example.avpr";
 
-    private static final String UNIX_SOCKET =
-            "/tmp/example-java.sock";
+    private static final String UNIX_SOCKET = "/tmp/example.sock";
 
-    private static final String TCP_HOST =
-            "127.0.0.1";
+    private static final String TCP_HOST = "127.0.0.1";
 
-    private static final int TCP_PORT =
-            9000;
-
+    private static final int TCP_PORT = 9000;
 
     /*
      * ======================================================================
@@ -61,19 +49,11 @@ public class ExampleServer {
      * ======================================================================
      */
 
-    private static Protocol loadProtocol()
-            throws IOException {
+    private static Protocol loadProtocol() throws IOException {
+        String protocolText = Files.readString(Path.of(PROTOCOL_FILE));
 
-        String protocolText =
-                Files.readString(
-                        Path.of(PROTOCOL_FILE)
-                );
-
-        return Protocol.parse(
-                protocolText
-        );
+        return Protocol.parse(protocolText);
     }
-
 
     /*
      * ======================================================================
@@ -91,53 +71,30 @@ public class ExampleServer {
      * We only need to implement the actual application methods.
      */
 
-    private static class ExampleResponder
-            extends GenericResponder {
+    private static class ExampleResponder extends GenericResponder {
 
-        ExampleResponder(
-                Protocol protocol) {
-
+        ExampleResponder(Protocol protocol) {
             super(protocol);
         }
 
-
         @Override
-        public Object respond(
-                Protocol.Message message,
-                Object request)
-                throws Exception {
+        public Object respond(Protocol.Message message, Object request)
+            throws Exception {
+            String method = message.getName();
 
-            String method =
-                    message.getName();
-
-            System.out.println(
-                    "[server] " +
-                    method +
-                    "(" +
-                    request +
-                    ")"
-            );
+            System.out.println("[server] " + method + "(" + request + ")");
 
             switch (method) {
-
                 case "echo":
-                    return echo(
-                            request
-                    );
-
+                    return echo(request);
                 case "add":
-                    return add(
-                            request
-                    );
-
+                    return add(request);
+                case "test":
+                    return test(request);
                 default:
-                    throw new RuntimeException(
-                            "Unknown RPC method: "
-                                    + method
-                    );
+                    throw new RuntimeException("Unknown RPC method: " + method);
             }
         }
-
 
         /*
          * ------------------------------------------------------------------
@@ -145,45 +102,23 @@ public class ExampleServer {
          * ------------------------------------------------------------------
          */
 
-        private Object echo(
-                Object request) {
+        private Object echo(Object request) {
+            GenericRecord outer = (GenericRecord) request;
 
-            GenericRecord outer =
-                    (GenericRecord) request;
+            GenericRecord echoRequest = (GenericRecord) outer.get("request");
 
-            GenericRecord echoRequest =
-                    (GenericRecord)
-                            outer.get(
-                                    "request"
-                            );
+            String message = echoRequest.get("message").toString();
 
-            String message =
-                    echoRequest
-                            .get("message")
-                            .toString();
+            System.out.println("[server] echo(" + message + ")");
 
-            System.out.println(
-                    "[server] echo("
-                            + message
-                            + ")"
+            GenericRecord response = new GenericData.Record(
+                getLocal().getMessages().get("echo").getResponse()
             );
 
-            GenericRecord response =
-                    new GenericData.Record(
-                            getLocal()
-                                    .getMessages()
-                                    .get("echo")
-                                    .getResponse()
-                    );
-
-            response.put(
-                    "message",
-                    message
-            );
+            response.put("message", message);
 
             return response;
         }
-
 
         /*
          * ------------------------------------------------------------------
@@ -191,59 +126,52 @@ public class ExampleServer {
          * ------------------------------------------------------------------
          */
 
-        private Object add(
-                Object request) {
+        private Object add(Object request) {
+            GenericRecord outer = (GenericRecord) request;
 
-            GenericRecord outer =
-                    (GenericRecord) request;
+            GenericRecord addRequest = (GenericRecord) outer.get("request");
 
-            GenericRecord addRequest =
-                    (GenericRecord)
-                            outer.get(
-                                    "request"
-                            );
+            long a = (Long) addRequest.get("a");
 
-            long a =
-                    (Long)
-                            addRequest.get(
-                                    "a"
-                            );
+            long b = (Long) addRequest.get("b");
 
-            long b =
-                    (Long)
-                            addRequest.get(
-                                    "b"
-                            );
-
-            long result =
-                    a + b;
+            long result = a + b;
 
             System.out.println(
-                    "[server] add("
-                            + a
-                            + ", "
-                            + b
-                            + ") -> "
-                            + result
+                "[server] add(" + a + ", " + b + ") -> " + result
             );
 
-            GenericRecord response =
-                    new GenericData.Record(
-                            getLocal()
-                                    .getMessages()
-                                    .get("add")
-                                    .getResponse()
-                    );
-
-            response.put(
-                    "result",
-                    result
+            GenericRecord response = new GenericData.Record(
+                getLocal().getMessages().get("add").getResponse()
             );
+
+            response.put("result", result);
+
+            return response;
+        }
+
+        private Object test(Object request) {
+            GenericRecord outer = (GenericRecord) request;
+            GenericRecord testRequest = (GenericRecord) outer.get("request");
+
+            int a = (Integer) testRequest.get("a");
+            int b = (Integer) testRequest.get("b");
+
+            int result = a - b;
+
+            System.out.println(
+                "[server] test(" + a + ", " + b + ") -> " + result
+            );
+
+            GenericRecord response = new GenericData.Record(
+                getLocal().getMessages().get("test").getResponse()
+            );
+
+            response.put("result", result);
 
             return response;
         }
     }
-
 
     /*
      * ======================================================================
@@ -259,79 +187,51 @@ public class ExampleServer {
      * The Rust transport implements the same framing.
      */
 
-
-    private static byte[] readFramedMessage(
-            InputStream input)
-            throws IOException {
-
-        ByteArrayOutputStream output =
-                new ByteArrayOutputStream();
+    private static byte[] readFramedMessage(InputStream input)
+        throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
 
         while (true) {
-
-            int length =
-                    readInt(input);
+            int length = readInt(input);
 
             if (length == 0) {
                 break;
             }
 
             if (length < 0) {
-                throw new IOException(
-                        "Negative Avro frame length: "
-                                + length
-                );
+                throw new IOException("Negative Avro frame length: " + length);
             }
 
-            byte[] buffer =
-                    input.readNBytes(
-                            length
-                    );
+            byte[] buffer = input.readNBytes(length);
 
             if (buffer.length != length) {
                 throw new IOException(
-                        "Unexpected EOF while reading "
-                                + "Avro frame"
+                    "Unexpected EOF while reading " + "Avro frame"
                 );
             }
 
-            output.write(
-                    buffer
-            );
+            output.write(buffer);
         }
 
         return output.toByteArray();
     }
 
-
     private static void writeFramedMessage(
-            OutputStream output,
-            List<ByteBuffer> buffers)
-            throws IOException {
-
+        OutputStream output,
+        List<ByteBuffer> buffers
+    ) throws IOException {
         for (ByteBuffer buffer : buffers) {
+            ByteBuffer duplicate = buffer.duplicate();
 
-            ByteBuffer duplicate =
-                    buffer.duplicate();
+            int length = duplicate.remaining();
 
-            int length =
-                    duplicate.remaining();
+            writeInt(output, length);
 
-            writeInt(
-                    output,
-                    length
-            );
+            byte[] bytes = new byte[length];
 
-            byte[] bytes =
-                    new byte[length];
+            duplicate.get(bytes);
 
-            duplicate.get(
-                    bytes
-            );
-
-            output.write(
-                    bytes
-            );
+            output.write(bytes);
         }
 
         /*
@@ -339,76 +239,44 @@ public class ExampleServer {
          * the Avro framed message.
          */
 
-        writeInt(
-                output,
-                0
-        );
+        writeInt(output, 0);
 
         output.flush();
     }
 
+    private static int readInt(InputStream input) throws IOException {
+        int b1 = input.read();
 
-    private static int readInt(
-            InputStream input)
-            throws IOException {
+        int b2 = input.read();
 
-        int b1 =
-                input.read();
+        int b3 = input.read();
 
-        int b2 =
-                input.read();
+        int b4 = input.read();
 
-        int b3 =
-                input.read();
-
-        int b4 =
-                input.read();
-
-        if (
-                b1 < 0 ||
-                b2 < 0 ||
-                b3 < 0 ||
-                b4 < 0
-        ) {
+        if (b1 < 0 || b2 < 0 || b3 < 0 || b4 < 0) {
             throw new IOException(
-                    "Connection closed while "
-                            + "reading frame length"
+                "Connection closed while " + "reading frame length"
             );
         }
 
-        return
-                ((b1 & 0xff) << 24)
-                        |
-                ((b2 & 0xff) << 16)
-                        |
-                ((b3 & 0xff) << 8)
-                        |
-                (b4 & 0xff);
-    }
-
-
-    private static void writeInt(
-            OutputStream output,
-            int value)
-            throws IOException {
-
-        output.write(
-                (value >>> 24) & 0xff
-        );
-
-        output.write(
-                (value >>> 16) & 0xff
-        );
-
-        output.write(
-                (value >>> 8) & 0xff
-        );
-
-        output.write(
-                value & 0xff
+        return (
+            ((b1 & 0xff) << 24) |
+            ((b2 & 0xff) << 16) |
+            ((b3 & 0xff) << 8) |
+            (b4 & 0xff)
         );
     }
 
+    private static void writeInt(OutputStream output, int value)
+        throws IOException {
+        output.write((value >>> 24) & 0xff);
+
+        output.write((value >>> 16) & 0xff);
+
+        output.write((value >>> 8) & 0xff);
+
+        output.write(value & 0xff);
+    }
 
     /*
      * ======================================================================
@@ -417,42 +285,26 @@ public class ExampleServer {
      */
 
     private static void handleConnection(
-            Socket socket,
-            ExampleResponder responder) {
+        Socket socket,
+        ExampleResponder responder
+    ) {
+        String address = socket.getRemoteSocketAddress().toString();
 
-        String address =
-                socket.getRemoteSocketAddress()
-                        .toString();
-
-        System.out.println(
-                "[server] connection from "
-                        + address
-        );
+        System.out.println("[server] connection from " + address);
 
         try (
-                socket;
-                InputStream input =
-                        socket.getInputStream();
-                OutputStream output =
-                        socket.getOutputStream()
+            socket;
+            InputStream input = socket.getInputStream();
+            OutputStream output = socket.getOutputStream()
         ) {
-
             while (true) {
-
                 byte[] request;
 
                 try {
-
-                    request =
-                            readFramedMessage(
-                                    input
-                            );
-
+                    request = readFramedMessage(input);
                 } catch (IOException e) {
-
                     System.out.println(
-                            "[server] connection closed: "
-                                    + e.getMessage()
+                        "[server] connection closed: " + e.getMessage()
                     );
 
                     break;
@@ -463,7 +315,6 @@ public class ExampleServer {
                 }
 
                 try {
-
                     /*
                      * Responder understands the
                      * complete Avro RPC message:
@@ -477,48 +328,24 @@ public class ExampleServer {
                      *     call response
                      */
 
-                    List<ByteBuffer> response =
-                            responder.respond(
-                                    List.of(
-                                            ByteBuffer.wrap(
-                                                    request
-                                            )
-                                    )
-                            );
-
-                    writeFramedMessage(
-                            output,
-                            response
+                    List<ByteBuffer> response = responder.respond(
+                        List.of(ByteBuffer.wrap(request))
                     );
 
+                    writeFramedMessage(output, response);
                 } catch (Exception e) {
-
-                    System.err.println(
-                            "[server] request failed: "
-                                    + e
-                    );
+                    System.err.println("[server] request failed: " + e);
 
                     e.printStackTrace();
                     break;
                 }
             }
-
         } catch (IOException e) {
-
-            System.err.println(
-                    "[server] connection error: "
-                            + e
-            );
-
+            System.err.println("[server] connection error: " + e);
         } finally {
-
-            System.out.println(
-                    "[server] disconnected: "
-                            + address
-            );
+            System.out.println("[server] disconnected: " + address);
         }
     }
-
 
     /*
      * ======================================================================
@@ -526,48 +353,28 @@ public class ExampleServer {
      * ======================================================================
      */
 
-    private static void startTcpServer(
-            ExampleResponder responder)
-            throws IOException {
+    private static void startTcpServer(ExampleResponder responder)
+        throws IOException {
+        ServerSocket server = new ServerSocket();
 
-        ServerSocket server =
-                new ServerSocket();
-
-        server.bind(
-                new InetSocketAddress(
-                        TCP_HOST,
-                        TCP_PORT
-                )
-        );
+        server.bind(new InetSocketAddress(TCP_HOST, TCP_PORT));
 
         System.out.println(
-                "[server] TCP listening on "
-                        + TCP_HOST
-                        + ":"
-                        + TCP_PORT
+            "[server] TCP listening on " + TCP_HOST + ":" + TCP_PORT
         );
 
         while (true) {
+            Socket socket = server.accept();
 
-            Socket socket =
-                    server.accept();
-
-            Thread thread =
-                    new Thread(
-                            () -> handleConnection(
-                                    socket,
-                                    responder
-                            )
-                    );
-
-            thread.setDaemon(
-                    true
+            Thread thread = new Thread(() ->
+                handleConnection(socket, responder)
             );
+
+            thread.setDaemon(true);
 
             thread.start();
         }
     }
-
 
     /*
      * ======================================================================
@@ -575,42 +382,26 @@ public class ExampleServer {
      * ======================================================================
      */
 
-    private static void startUnixServer(
-            ExampleResponder responder)
-            throws IOException {
+    private static void startUnixServer(ExampleResponder responder)
+        throws IOException {
+        Path socketPath = Path.of(UNIX_SOCKET);
 
-        Path socketPath =
-                Path.of(
-                        UNIX_SOCKET
-                );
+        Files.deleteIfExists(socketPath);
 
-        Files.deleteIfExists(
-                socketPath
+        UnixDomainSocketAddress address = UnixDomainSocketAddress.of(
+            socketPath
         );
 
-        UnixDomainSocketAddress address =
-                UnixDomainSocketAddress.of(
-                        socketPath
-                );
-
-        ServerSocketChannel server =
-                ServerSocketChannel.open(
-                        StandardProtocolFamily.UNIX
-                );
-
-        server.bind(
-                address
+        ServerSocketChannel server = ServerSocketChannel.open(
+            StandardProtocolFamily.UNIX
         );
 
-        System.out.println(
-                "[server] Unix listening on "
-                        + UNIX_SOCKET
-        );
+        server.bind(address);
+
+        System.out.println("[server] Unix listening on " + UNIX_SOCKET);
 
         while (true) {
-
-            SocketChannel channel =
-                    server.accept();
+            SocketChannel channel = server.accept();
 
             /*
              * Convert the channel into a
@@ -618,22 +409,15 @@ public class ExampleServer {
              * for the framing code.
              */
 
-            Thread thread =
-                    new Thread(
-                            () -> handleUnixConnection(
-                                    channel,
-                                    responder
-                            )
-                    );
-
-            thread.setDaemon(
-                    true
+            Thread thread = new Thread(() ->
+                handleUnixConnection(channel, responder)
             );
+
+            thread.setDaemon(true);
 
             thread.start();
         }
     }
-
 
     /*
      * ======================================================================
@@ -642,41 +426,24 @@ public class ExampleServer {
      */
 
     private static void handleUnixConnection(
-            SocketChannel channel,
-            ExampleResponder responder) {
-
-        System.out.println(
-                "[server] Unix connection"
-        );
+        SocketChannel channel,
+        ExampleResponder responder
+    ) {
+        System.out.println("[server] Unix connection");
 
         try (
-                channel;
-                InputStream input =
-                        Channels.newInputStream(
-                                channel
-                        );
-                OutputStream output =
-                        Channels.newOutputStream(
-                                channel
-                        )
+            channel;
+            InputStream input = Channels.newInputStream(channel);
+            OutputStream output = Channels.newOutputStream(channel)
         ) {
-
             while (true) {
-
                 byte[] request;
 
                 try {
-
-                    request =
-                            readFramedMessage(
-                                    input
-                            );
-
+                    request = readFramedMessage(input);
                 } catch (IOException e) {
-
                     System.out.println(
-                            "[server] Unix connection closed: "
-                                    + e.getMessage()
+                        "[server] Unix connection closed: " + e.getMessage()
                     );
 
                     break;
@@ -687,48 +454,24 @@ public class ExampleServer {
                 }
 
                 try {
-
-                    List<ByteBuffer> response =
-                            responder.respond(
-                                    List.of(
-                                            ByteBuffer.wrap(
-                                                    request
-                                            )
-                                    )
-                            );
-
-                    writeFramedMessage(
-                            output,
-                            response
+                    List<ByteBuffer> response = responder.respond(
+                        List.of(ByteBuffer.wrap(request))
                     );
 
+                    writeFramedMessage(output, response);
                 } catch (Exception e) {
-
-                    System.err.println(
-                            "[server] Unix request failed: "
-                                    + e
-                    );
+                    System.err.println("[server] Unix request failed: " + e);
 
                     e.printStackTrace();
                     break;
                 }
             }
-
         } catch (IOException e) {
-
-            System.err.println(
-                    "[server] Unix connection error: "
-                            + e
-            );
-
+            System.err.println("[server] Unix connection error: " + e);
         } finally {
-
-            System.out.println(
-                    "[server] Unix disconnected"
-            );
+            System.out.println("[server] Unix disconnected");
         }
     }
-
 
     /*
      * ======================================================================
@@ -736,47 +479,28 @@ public class ExampleServer {
      * ======================================================================
      */
 
-    public static void main(
-            String[] args)
-            throws Exception {
+    public static void main(String[] args) throws Exception {
+        System.out.println("=== Avro RPC Java server ===");
 
-        System.out.println(
-                "=== Avro RPC Java server ==="
-        );
+        Protocol protocol = loadProtocol();
 
-        Protocol protocol =
-                loadProtocol();
+        System.out.println("[server] protocol: " + protocol.getName());
 
-        System.out.println(
-                "[server] protocol: "
-                        + protocol.getName()
-        );
-
-        ExampleResponder responder =
-                new ExampleResponder(
-                        protocol
-                );
+        ExampleResponder responder = new ExampleResponder(protocol);
 
         /*
          * Start Unix server.
          */
 
-        Thread unixThread =
-                new Thread(
-                        () -> {
-                            try {
-                                startUnixServer(
-                                        responder
-                                );
-                            } catch (Exception e) {
-                                e.printStackTrace();
-                            }
-                        }
-                );
+        Thread unixThread = new Thread(() -> {
+            try {
+                startUnixServer(responder);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
 
-        unixThread.setDaemon(
-                true
-        );
+        unixThread.setDaemon(true);
 
         unixThread.start();
 
@@ -784,46 +508,28 @@ public class ExampleServer {
          * Start TCP server.
          */
 
-        Thread tcpThread =
-                new Thread(
-                        () -> {
-                            try {
-                                startTcpServer(
-                                        responder
-                                );
-                            } catch (Exception e) {
-                                e.printStackTrace();
-                            }
-                        }
-                );
+        Thread tcpThread = new Thread(() -> {
+            try {
+                startTcpServer(responder);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        });
 
-        tcpThread.setDaemon(
-                true
-        );
+        tcpThread.setDaemon(true);
 
         tcpThread.start();
 
-        System.out.println(
-                "[server] Avro RPC server is running"
-        );
+        System.out.println("[server] Avro RPC server is running");
 
-        System.out.println(
-                "[server] Unix: "
-                        + UNIX_SOCKET
-        );
+        System.out.println("[server] Unix: " + UNIX_SOCKET);
 
-        System.out.println(
-                "[server] TCP:   "
-                        + TCP_HOST
-                        + ":"
-                        + TCP_PORT
-        );
+        System.out.println("[server] TCP:   " + TCP_HOST + ":" + TCP_PORT);
 
         /*
          * Keep main alive.
          */
 
-        Thread.currentThread()
-                .join();
+        Thread.currentThread().join();
     }
 }

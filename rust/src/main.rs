@@ -24,6 +24,9 @@ fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let result = client.add(10, 20)?;
         println!("add -> {result}");
 
+        let res = client.test(42, 42)?;
+        println!("test -> {res}");
+
         client.close()?;
     }
 

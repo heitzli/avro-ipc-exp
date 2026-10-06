@@ -17,6 +17,15 @@
         }
       ],
       "response": "EchoResponse"
+    },
+    "test": {
+      "request": [
+        {
+          "name": "request",
+          "type": "TestRequest"
+        }
+      ],
+      "response": "TestResponse"
     }
   },
   "namespace": "example",
@@ -64,6 +73,30 @@
         }
       ],
       "name": "AddResponse",
+      "type": "record"
+    },
+    {
+      "fields": [
+        {
+          "name": "a",
+          "type": "int"
+        },
+        {
+          "name": "b",
+          "type": "int"
+        }
+      ],
+      "name": "TestRequest",
+      "type": "record"
+    },
+    {
+      "fields": [
+        {
+          "name": "result",
+          "type": "int"
+        }
+      ],
+      "name": "TestResponse",
       "type": "record"
     }
   ]

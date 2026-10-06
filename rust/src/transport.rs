@@ -4,7 +4,6 @@ use std::net::TcpStream;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 
-// TODO check if really send and sync!
 pub type TransportResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 pub trait Transport {
