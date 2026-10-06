@@ -353,9 +353,7 @@ impl AvroProtocol {
              *   example.AddResponse
              */
 
-            let response_fullname = if response_name.contains('.') {
-                response_name.to_string()
-            } else if namespace.is_empty() {
+            let response_fullname = if response_name.contains('.') || namespace.is_empty() {
                 response_name.to_string()
             } else {
                 format!("{namespace}.{response_name}")
