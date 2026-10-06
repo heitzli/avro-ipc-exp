@@ -1,0 +1,113 @@
+{
+  "messages": {
+    "add": {
+      "request": [
+        {
+          "name": "request",
+          "type": "AddRequest"
+        }
+      ],
+      "response": "AddResponse"
+    },
+    "echo": {
+      "request": [
+        {
+          "name": "request",
+          "type": "EchoRequest"
+        }
+      ],
+      "response": "EchoResponse"
+    },
+    "test": {
+      "request": [
+        {
+          "name": "request",
+          "type": "TestRequest"
+        }
+      ],
+      "response": "TestResponse"
+    }
+  },
+  "namespace": "example",
+  "protocol": "ExampleService",
+  "types": [
+    {
+      "fields": [
+        {
+          "name": "message",
+          "type": "string"
+        }
+      ],
+      "name": "EchoRequest",
+      "type": "record"
+    },
+    {
+      "fields": [
+        {
+          "name": "message",
+          "type": "string"
+        }
+      ],
+      "name": "EchoResponse",
+      "type": "record"
+    },
+    {
+      "fields": [
+        {
+          "name": "a",
+          "type": "long"
+        },
+        {
+          "name": "b",
+          "type": "long"
+        }
+      ],
+      "name": "AddRequest",
+      "type": "record"
+    },
+    {
+      "fields": [
+        {
+          "name": "result",
+          "type": "long"
+        }
+      ],
+      "name": "AddResponse",
+      "type": "record"
+    },
+    {
+      "fields": [
+        {
+          "name": "a",
+          "type": "int"
+        },
+        {
+          "name": "b",
+          "type": "int"
+        },
+        {
+          "default": "new",
+          "name": "c",
+          "type": "string"
+        }
+      ],
+      "name": "TestRequest",
+      "type": "record"
+    },
+    {
+      "fields": [
+        {
+          "name": "result",
+          "type": "int"
+        },
+        {
+          "default": "n/a",
+          "name": "note",
+          "type": "string"
+        }
+      ],
+      "name": "TestResponse",
+      "type": "record"
+    }
+  ]
+}

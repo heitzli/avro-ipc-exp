@@ -440,6 +440,16 @@ impl AvroProtocol {
             .ok_or_else(|| format!("unknown RPC method: {method}").into())
     }
 
+    /// Request (writer) schema for `method`, cloned for caller-owned use.
+    pub fn request_schema(&self, method: &str) -> RpcResult<Schema> {
+        Ok(self.message(method)?.request_schema.clone())
+    }
+
+    /// Response (reader) schema for `method`, cloned for caller-owned use.
+    pub fn response_schema(&self, method: &str) -> RpcResult<Schema> {
+        Ok(self.message(method)?.response_schema.clone())
+    }
+
     /*
      * ----------------------------------------------------------------------
      * Schema references
@@ -448,6 +458,11 @@ impl AvroProtocol {
 
     fn schemata_refs(&self) -> Vec<&Schema> {
         self.schemata.iter().collect()
+    }
+
+    /// Public accessor for writer/reader resolution helpers.
+    pub fn schemata_refs_pub(&self) -> Vec<&Schema> {
+        self.schemata_refs()
     }
 }
 
@@ -475,6 +490,20 @@ pub struct AvroRpcClient<T: Transport> {
      * responder.respond() call.
      */
     handshake_complete: bool,
+
+    /*
+     * Server protocol as announced via handshake `serverProtocol`.
+     *
+     * Present after the first NONE/CLIENT handshake. Used as the
+     * writer schema when decoding responses so that added fields
+     * with defaults resolve correctly (reader = local protocol).
+     */
+    peer_protocol: Option<AvroProtocol>,
+
+    /*
+     * Last handshake `match` value (BOTH/CLIENT/NONE), for tests.
+     */
+    last_match: Option<String>,
 }
 
 impl<T: Transport> AvroRpcClient<T> {
@@ -498,7 +527,61 @@ impl<T: Transport> AvroRpcClient<T> {
             protocol,
             server_hash,
             handshake_complete: false,
+            peer_protocol: None,
+            last_match: None,
         })
+    }
+
+    /// Last handshake match (BOTH/CLIENT/NONE), if any yet.
+    pub fn last_handshake_match(&self) -> Option<&str> {
+        self.last_match.as_deref()
+    }
+
+    /// Whether a peer (server) protocol was announced via handshake.
+    pub fn has_peer_protocol(&self) -> bool {
+        self.peer_protocol.is_some()
+    }
+
+    /*
+     * Remember server hash + peer protocol from a handshake response.
+     */
+    fn remember_handshake(&mut self, hs: &HandshakeResponse) -> RpcResult<()> {
+        self.last_match = Some(hs.match_type.clone());
+
+        if let Some(hash) = hs.server_hash {
+            self.server_hash = hash;
+        }
+
+        if let Some(text) = hs.server_protocol.as_deref() {
+            match AvroProtocol::parse(text) {
+                Ok(peer) => {
+                    self.server_hash = peer.md5;
+                    self.peer_protocol = Some(peer);
+                }
+                Err(e) => {
+                    // Keep going with hash-only behavior; response
+                    // decoding falls back to the local schema.
+                    eprintln!("warning: ignoring unparsable serverProtocol: {e}");
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Writer (server) response schema for resolution. Falls back to local.
+    fn writer_response_schema(&self, method: &str) -> RpcResult<Schema> {
+        if let Some(peer) = self.peer_protocol.as_ref() {
+            match peer.response_schema(method) {
+                Ok(schema) => return Ok(schema),
+                Err(_) => {
+                    // Unknown in peer protocol; fall back to local so the
+                    // subsequent read surfaces a clear error.
+                }
+            }
+        }
+
+        self.protocol.response_schema(method)
     }
 
     /*
@@ -519,14 +602,17 @@ impl<T: Transport> AvroRpcClient<T> {
 
     pub fn call(&mut self, method: &str, request: Value) -> RpcResult<Value> {
         /*
-         * Get the method definition from the .avpr.
+         * Get the method definition from the local .avpr.
+         *
+         * Requests are always encoded with the local (writer) schema;
+         * the server resolves writer -> reader itself (see Python
+         * Responder.read_request). Responses are decoded with
+         * writer = peer protocol (if announced) and reader = local.
          */
 
-        let message = self.protocol.message(method)?;
+        let request_schema = self.protocol.request_schema(method)?;
 
-        let request_schema = message.request_schema.clone();
-
-        let response_schema = message.response_schema.clone();
+        let response_reader_schema = self.protocol.response_schema(method)?;
 
         /*
          * --------------------------------------------------------------
@@ -595,13 +681,11 @@ impl<T: Transport> AvroRpcClient<T> {
              * ==========================================================
              */
             "BOTH" => {
-                if let Some(hash) = handshake_response.server_hash {
-                    self.server_hash = hash;
-                }
+                self.remember_handshake(&handshake_response)?;
 
                 self.handshake_complete = true;
 
-                self.decode_remaining_response(&response, &cursor, method, &response_schema)
+                self.decode_remaining_response(&response, &cursor, method, &response_reader_schema)
             }
 
             /*
@@ -610,13 +694,11 @@ impl<T: Transport> AvroRpcClient<T> {
              * ==========================================================
              */
             "CLIENT" => {
-                if let Some(hash) = handshake_response.server_hash {
-                    self.server_hash = hash;
-                }
+                self.remember_handshake(&handshake_response)?;
 
                 self.handshake_complete = true;
 
-                self.decode_remaining_response(&response, &cursor, method, &response_schema)
+                self.decode_remaining_response(&response, &cursor, method, &response_reader_schema)
             }
 
             /*
@@ -625,9 +707,7 @@ impl<T: Transport> AvroRpcClient<T> {
              * ==========================================================
              */
             "NONE" => {
-                if let Some(hash) = handshake_response.server_hash {
-                    self.server_hash = hash;
-                }
+                self.remember_handshake(&handshake_response)?;
 
                 /*
                  * Build handshake containing the complete protocol.
@@ -659,13 +739,16 @@ impl<T: Transport> AvroRpcClient<T> {
 
                 match retry_handshake.match_type.as_str() {
                     "BOTH" | "CLIENT" => {
-                        if let Some(hash) = retry_handshake.server_hash {
-                            self.server_hash = hash;
-                        }
+                        self.remember_handshake(&retry_handshake)?;
 
                         self.handshake_complete = true;
 
-                        self.decode_remaining_response(&response, &cursor, method, &response_schema)
+                        self.decode_remaining_response(
+                            &response,
+                            &cursor,
+                            method,
+                            &response_reader_schema,
+                        )
                     }
 
                     other => Err(format!("handshake retry failed: {other}").into()),
@@ -747,6 +830,8 @@ impl<T: Transport> AvroRpcClient<T> {
 
         let mut server_hash = None;
 
+        let mut server_protocol = None;
+
         for (name, value) in fields {
             match name.as_str() {
                 /*
@@ -778,6 +863,23 @@ impl<T: Transport> AvroRpcClient<T> {
                     }
                 }
 
+                /*
+                 * ------------------------------------------------------
+                 * serverProtocol
+                 * ------------------------------------------------------
+                 *
+                 * Union [null, string]: branch 1 carries the JSON text
+                 * of the server's protocol (sent on CLIENT/NONE).
+                 */
+                "serverProtocol" => {
+                    if let Value::Union(branch, boxed) = value
+                        && branch == 1
+                        && let Value::String(text) = *boxed
+                    {
+                        server_protocol = Some(text);
+                    }
+                }
+
                 _ => {}
             }
         }
@@ -787,6 +889,7 @@ impl<T: Transport> AvroRpcClient<T> {
         Ok(HandshakeResponse {
             match_type,
             server_hash,
+            server_protocol,
         })
     }
 
@@ -801,7 +904,7 @@ impl<T: Transport> AvroRpcClient<T> {
         response: &[u8],
         cursor: &Cursor<&[u8]>,
         method: &str,
-        response_schema: &Schema,
+        response_reader_schema: &Schema,
     ) -> RpcResult<Value> {
         let position = usize::try_from(cursor.position())?;
 
@@ -811,7 +914,7 @@ impl<T: Transport> AvroRpcClient<T> {
             return Err("handshake succeeded but server returned no RPC response".into());
         }
 
-        self.decode_call_response(remaining, method, response_schema)
+        self.decode_call_response(remaining, method, response_reader_schema)
     }
 
     /*
@@ -895,7 +998,7 @@ impl<T: Transport> AvroRpcClient<T> {
         &self,
         bytes: &[u8],
         method: &str,
-        response_schema: &Schema,
+        response_reader_schema: &Schema,
     ) -> RpcResult<Value> {
         let mut cursor = Cursor::new(bytes);
 
@@ -948,13 +1051,29 @@ impl<T: Transport> AvroRpcClient<T> {
 
         /*
          * --------------------------------------------------------------
-         * Successful response
+         * Successful response with writer -> reader resolution
          * --------------------------------------------------------------
+         *
+         * writer = server (peer) protocol when announced via handshake,
+         * reader = local protocol. This is what fills response defaults
+         * (e.g. v2 `note`) when talking to a newer server, and drops
+         * extra writer fields when talking to one.
          */
 
-        let result = GenericDatumReader::builder(response_schema)
-            .writer_schemata(self.protocol.schemata_refs())?
-            .maybe_reader_schema(None)
+        let writer_schema = self.writer_response_schema(method)?;
+
+        let writer_schemata: Vec<&Schema> = if let Some(peer) = self.peer_protocol.as_ref() {
+            peer.schemata_refs_pub()
+        } else {
+            self.protocol.schemata_refs_pub()
+        };
+
+        let reader_schemata: Vec<&Schema> = self.protocol.schemata_refs_pub();
+
+        let result = GenericDatumReader::builder(&writer_schema)
+            .writer_schemata(writer_schemata)?
+            .maybe_reader_schema(Some(response_reader_schema))
+            .reader_schemata(reader_schemata)?
             .build()?
             .read_value(&mut cursor)?;
 
@@ -973,4 +1092,232 @@ struct HandshakeResponse {
     match_type: String,
 
     server_hash: Option<[u8; 16]>,
+
+    server_protocol: Option<String>,
+}
+
+/*
+ * ==========================================================================
+ * Protocol-evolution unit tests (datum level, no network)
+ * ==========================================================================
+ */
+
+#[cfg(test)]
+mod evolution_tests {
+    use super::*;
+    use apache_avro::writer::datum::GenericDatumWriter;
+
+    const V1: &str = include_str!("../../protocol/example_v1.avpr");
+    const V2: &str = include_str!("../../protocol/example_v2.avpr");
+    const V3_BAD: &str = include_str!("../../protocol/example_v3_bad.avpr");
+
+    fn encode(schema: &Schema, refs: Vec<&Schema>, value: Value) -> Vec<u8> {
+        GenericDatumWriter::builder(schema)
+            .schemata(refs)
+            .unwrap()
+            .build()
+            .unwrap()
+            .write_value_to_vec(value)
+            .unwrap()
+    }
+
+    fn decode(
+        writer: &Schema,
+        writer_refs: Vec<&Schema>,
+        reader: &Schema,
+        reader_refs: Vec<&Schema>,
+        bytes: &[u8],
+    ) -> Result<Value, String> {
+        let mut cursor = Cursor::new(bytes);
+        GenericDatumReader::builder(writer)
+            .writer_schemata(writer_refs)
+            .map_err(|e| e.to_string())?
+            .maybe_reader_schema(Some(reader))
+            .reader_schemata(reader_refs)
+            .map_err(|e| e.to_string())?
+            .build()
+            .map_err(|e| e.to_string())?
+            .read_value(&mut cursor)
+            .map_err(|e| e.to_string())
+    }
+
+    fn inner_fields(value: &Value) -> Vec<(String, Value)> {
+        match value {
+            Value::Record(fields) => {
+                assert_eq!(
+                    fields.len(),
+                    1,
+                    "expected RpcRequest wrapper, got {value:?}"
+                );
+                match &fields[0].1 {
+                    Value::Record(inner) => inner.clone(),
+                    other => panic!("expected inner record, got {other:?}"),
+                }
+            }
+            other => panic!("expected wrapper record, got {other:?}"),
+        }
+    }
+
+    fn field(fields: &[(String, Value)], name: &str) -> Value {
+        fields
+            .iter()
+            .find(|(n, _)| n == name)
+            .unwrap_or_else(|| panic!("missing field '{name}' in {fields:?}"))
+            .1
+            .clone()
+    }
+
+    #[test]
+    fn request_v1_to_v2_fills_default_c() {
+        let v1 = AvroProtocol::parse(V1).unwrap();
+        let v2 = AvroProtocol::parse(V2).unwrap();
+        let writer = v1.request_schema("test").unwrap();
+        let reader = v2.request_schema("test").unwrap();
+
+        let datum = Value::Record(vec![(
+            "request".to_string(),
+            Value::Record(vec![
+                ("a".to_string(), Value::Int(42)),
+                ("b".to_string(), Value::Int(7)),
+            ]),
+        )]);
+        let bytes = encode(&writer, v1.schemata_refs_pub(), datum);
+
+        let resolved = decode(
+            &writer,
+            v1.schemata_refs_pub(),
+            &reader,
+            v2.schemata_refs_pub(),
+            &bytes,
+        )
+        .expect("v1 -> v2 request must resolve with default c");
+        let inner = inner_fields(&resolved);
+        assert_eq!(field(&inner, "a"), Value::Int(42));
+        assert_eq!(field(&inner, "b"), Value::Int(7));
+        assert_eq!(field(&inner, "c"), Value::String("new".to_string()));
+    }
+
+    #[test]
+    fn request_v2_to_v1_ignores_extra_c() {
+        let v1 = AvroProtocol::parse(V1).unwrap();
+        let v2 = AvroProtocol::parse(V2).unwrap();
+        let writer = v2.request_schema("test").unwrap();
+        let reader = v1.request_schema("test").unwrap();
+
+        let datum = Value::Record(vec![(
+            "request".to_string(),
+            Value::Record(vec![
+                ("a".to_string(), Value::Int(1)),
+                ("b".to_string(), Value::Int(2)),
+                ("c".to_string(), Value::String("hi".to_string())),
+            ]),
+        )]);
+        let bytes = encode(&writer, v2.schemata_refs_pub(), datum);
+
+        let resolved = decode(
+            &writer,
+            v2.schemata_refs_pub(),
+            &reader,
+            v1.schemata_refs_pub(),
+            &bytes,
+        )
+        .expect("v2 -> v1 request must drop extra c");
+        let inner = inner_fields(&resolved);
+        assert_eq!(inner.len(), 2);
+        assert_eq!(field(&inner, "a"), Value::Int(1));
+        assert_eq!(field(&inner, "b"), Value::Int(2));
+    }
+
+    #[test]
+    fn request_v1_to_v3_without_default_fails() {
+        let v1 = AvroProtocol::parse(V1).unwrap();
+        let v3 = AvroProtocol::parse(V3_BAD).unwrap();
+        let writer = v1.request_schema("test").unwrap();
+        let reader = v3.request_schema("test").unwrap();
+
+        let datum = Value::Record(vec![(
+            "request".to_string(),
+            Value::Record(vec![
+                ("a".to_string(), Value::Int(1)),
+                ("b".to_string(), Value::Int(2)),
+            ]),
+        )]);
+        let bytes = encode(&writer, v1.schemata_refs_pub(), datum);
+
+        let err = decode(
+            &writer,
+            v1.schemata_refs_pub(),
+            &reader,
+            v3.schemata_refs_pub(),
+            &bytes,
+        )
+        .expect_err("v1 -> v3 (required c, no default) must fail");
+        assert!(
+            err.to_lowercase().contains("default") || err.to_lowercase().contains("c"),
+            "expected default/missing-field error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn response_v1_to_v2_fills_default_note() {
+        let v1 = AvroProtocol::parse(V1).unwrap();
+        let v2 = AvroProtocol::parse(V2).unwrap();
+        let writer = v1.response_schema("test").unwrap();
+        let reader = v2.response_schema("test").unwrap();
+
+        let bytes = encode(
+            &writer,
+            v1.schemata_refs_pub(),
+            Value::Record(vec![("result".to_string(), Value::Int(35))]),
+        );
+
+        let resolved = decode(
+            &writer,
+            v1.schemata_refs_pub(),
+            &reader,
+            v2.schemata_refs_pub(),
+            &bytes,
+        )
+        .expect("v1 -> v2 response must fill default note");
+        match resolved {
+            Value::Record(fields) => {
+                assert_eq!(field(&fields, "result"), Value::Int(35));
+                assert_eq!(field(&fields, "note"), Value::String("n/a".to_string()));
+            }
+            other => panic!("expected record, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn response_v2_to_v1_ignores_extra_note() {
+        let v1 = AvroProtocol::parse(V1).unwrap();
+        let v2 = AvroProtocol::parse(V2).unwrap();
+        let writer = v2.response_schema("test").unwrap();
+        let reader = v1.response_schema("test").unwrap();
+
+        let bytes = encode(
+            &writer,
+            v2.schemata_refs_pub(),
+            Value::Record(vec![
+                ("result".to_string(), Value::Int(35)),
+                ("note".to_string(), Value::String("c=new".to_string())),
+            ]),
+        );
+
+        let resolved = decode(
+            &writer,
+            v2.schemata_refs_pub(),
+            &reader,
+            v1.schemata_refs_pub(),
+            &bytes,
+        )
+        .expect("v2 -> v1 response must drop extra note");
+        match resolved {
+            Value::Record(fields) => {
+                assert_eq!(fields.len(), 1);
+                assert_eq!(field(&fields, "result"), Value::Int(35));
+            }
+            other => panic!("expected record, got {other:?}"),
+        }
+    }
 }

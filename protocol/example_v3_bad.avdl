@@ -1,0 +1,39 @@
+@namespace("example")
+protocol ExampleService {
+
+  record EchoRequest {
+    string message;
+  }
+
+  record EchoResponse {
+    string message;
+  }
+
+  record AddRequest {
+    long a;
+    long b;
+  }
+
+  record AddResponse {
+    long result;
+  }
+
+  // Incompatible evolution: required field without default.
+  // Old writers (v1) cannot be read by this version.
+  record TestRequest {
+    int a;
+    int b;
+    string c;
+  }
+
+  record TestResponse {
+    int result;
+  }
+
+  EchoResponse echo(EchoRequest request);
+
+  AddResponse add(AddRequest request);
+
+  TestResponse test(TestRequest request);
+
+}

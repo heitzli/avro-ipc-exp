@@ -1,10 +1,7 @@
-mod avro_rpc;
-mod example_client;
-mod transport;
-use example_client::ExampleServiceClient;
-use transport::TcpTransport;
+use rust_avro_rpc::example_client::ExampleServiceClient;
+use rust_avro_rpc::transport::TcpTransport;
 #[cfg(unix)]
-use transport::UnixTransport;
+use rust_avro_rpc::transport::UnixTransport;
 
 fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     println!("=== Avro RPC Rust client ===");

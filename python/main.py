@@ -1,3 +1,4 @@
+import argparse
 import os
 import socket
 import threading
@@ -6,29 +7,43 @@ from typing import Any
 import avro.ipc
 import avro.protocol
 
-PROTOCOL_FILE = "../protocol/example.avpr"
+PROTOCOL_FILE = os.environ.get("AVRO_PROTOCOL", "../protocol/example.avpr")
 
-UNIX_SOCKET = "/tmp/example.sock"
+UNIX_SOCKET = os.environ.get("AVRO_UNIX_SOCKET", "/tmp/example.sock")
 
-TCP_HOST = "127.0.0.1"
-TCP_PORT = 9000
+TCP_HOST = os.environ.get("AVRO_TCP_HOST", "127.0.0.1")
+TCP_PORT = int(os.environ.get("AVRO_TCP_PORT", "9000"))
 
 RequestDict = dict[str, Any]
 ResultDict = dict[str, Any]
 
 
-with open(PROTOCOL_FILE, "r", encoding="utf-8") as f:
-    PROTOCOL_TEXT = f.read()
+def load_protocol(path: str) -> avro.protocol.Protocol:
+    with open(path, "r", encoding="utf-8") as f:
+        return avro.protocol.parse(f.read())
 
 
-PROTOCOL = avro.protocol.parse(PROTOCOL_TEXT)
+PROTOCOL = load_protocol(PROTOCOL_FILE)
 
 # TODO: Try to implement as async
 
 
+def _record_has_field(protocol: avro.protocol.Protocol, record: str, field: str) -> bool:
+    for schema in protocol.types:
+        if getattr(schema, "fullname", "") in (record, f"example.{record}"):
+            return any(f.name == field for f in schema.fields)
+    return False
+
+
 class ExampleResponder(avro.ipc.Responder):
-    def __init__(self):
-        super().__init__(PROTOCOL)
+    def __init__(self, protocol: avro.protocol.Protocol | None = None):
+        super().__init__(protocol or PROTOCOL)
+        # Python's DatumWriter validates strictly: extra keys raise
+        # AvroTypeException. Only send `note` when the local (writer)
+        # response schema actually declares it (v2).
+        self._test_response_has_note = _record_has_field(
+            self.local_protocol, "TestResponse", "note"
+        )
 
     def invoke(self, local_message: avro.protocol.Message, request: RequestDict):  # type: ignore
         method = local_message.name
@@ -46,11 +61,23 @@ class ExampleResponder(avro.ipc.Responder):
         raise RuntimeError(f"Unknown RPC method: {method}")
 
     def test(self, request: RequestDict) -> ResultDict:
-        a = request["request"]["a"]
-        b = request["request"]["b"]
+        inner = request["request"]
+        a = inner["a"]
+        b = inner["b"]
+        # `c` only exists in v2; DatumReader fills the default ("new")
+        # when an old (v1) client omits it. `.get` keeps v1 servers working
+        # when a new client sends `c` that the v1 reader skips.
+        c = inner.get("c", "<missing>")
 
         result = a - b
-        return {"result": result}
+        print(f"[server] test(a={a}, b={b}, c={c!r}) -> {result}", flush=True)
+        response: ResultDict = {"result": result}
+        if self._test_response_has_note:
+            # v2 writers require every field (DatumWriter does not
+            # fill defaults on write); v1 must omit it (extra keys
+            # fail strict validation).
+            response["note"] = f"c={c}"
+        return response
 
     def echo(self, request: RequestDict) -> ResultDict:
         message = request["request"]["message"]
@@ -104,12 +131,17 @@ class FramedSocket:
         self.sock.close()
 
 
-def handle_connection(sock: socket.socket, address: str) -> None:
+_responder_protocol: avro.protocol.Protocol = PROTOCOL
+
+
+def handle_connection(
+    sock: socket.socket, address: str, responder: ExampleResponder | None = None
+) -> None:
     print(f"[server] connection from {address}", flush=True)
     framed_socket = FramedSocket(sock)
     reader = avro.ipc.FramedReader(framed_socket)
     writer = avro.ipc.FramedWriter(framed_socket)
-    responder = ExampleResponder()
+    responder = responder or ExampleResponder(_responder_protocol)
 
     try:
         while True:
@@ -135,58 +167,92 @@ def handle_connection(sock: socket.socket, address: str) -> None:
         print(f"[server] disconnected: {address}", flush=True)
 
 
-def serve_socket(server_sock: socket.socket, name: str):
+def serve_socket(server_sock: socket.socket, name: str, responder: ExampleResponder):
     print(f"[server] listening on {name}", flush=True)
 
     while True:
         client_sock, address = server_sock.accept()
-        thread = threading.Thread(target=handle_connection, args=(client_sock, address), daemon=True)
+        thread = threading.Thread(
+            target=handle_connection, args=(client_sock, address, responder), daemon=True
+        )
         thread.start()
 
 
-def start_unix_server() -> socket.socket:
-    if os.path.exists(UNIX_SOCKET):
-        os.unlink(UNIX_SOCKET)
+def start_unix_server(path: str) -> socket.socket:
+    if os.path.exists(path):
+        os.unlink(path)
     server = socket.socket(
         socket.AF_UNIX,
         socket.SOCK_STREAM,
     )
-    server.bind(UNIX_SOCKET)
+    server.bind(path)
     server.listen(16)
     return server
 
 
-def start_tcp_server() -> socket.socket:
+def start_tcp_server(host: str, port: int) -> socket.socket:
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((TCP_HOST, TCP_PORT))
+    server.bind((host, port))
     server.listen(16)
     return server
 
 
-def main():
-    unix_server = start_unix_server()
-    tcp_server = start_tcp_server()
-    unix_thread = threading.Thread(target=serve_socket, args=(unix_server, UNIX_SOCKET), daemon=True)
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Avro RPC example server")
+    parser.add_argument("--protocol", default=PROTOCOL_FILE)
+    parser.add_argument("--tcp-host", default=TCP_HOST)
+    parser.add_argument("--tcp-port", type=int, default=TCP_PORT)
+    parser.add_argument("--unix-socket", default=UNIX_SOCKET)
+    parser.add_argument("--no-unix", action="store_true", help="disable unix socket listener (for tests)")
+    return parser.parse_args()
 
-    tcp_thread = threading.Thread(target=serve_socket, args=(tcp_server, f"{TCP_HOST}:{TCP_PORT}"), daemon=True)
-    unix_thread.start()
-    tcp_thread.start()
 
-    print("[server] Avro RPC server is running", flush=True)
-    print(f"[server] Unix: {UNIX_SOCKET}", flush=True)
-    print(f"[server] TCP:   {TCP_HOST}:{TCP_PORT}", flush=True)
+def main() -> None:
+    global PROTOCOL, _responder_protocol
+    args = parse_args()
+    PROTOCOL = load_protocol(args.protocol)
+    _responder_protocol = PROTOCOL
+    responder = ExampleResponder(PROTOCOL)
+
+    threads = []
+    servers: list[socket.socket] = []
+
+    if not args.no_unix:
+        unix_server = start_unix_server(args.unix_socket)
+        servers.append(unix_server)
+        unix_thread = threading.Thread(
+            target=serve_socket, args=(unix_server, args.unix_socket, responder), daemon=True
+        )
+        threads.append(unix_thread)
+
+    tcp_server = start_tcp_server(args.tcp_host, args.tcp_port)
+    servers.append(tcp_server)
+    tcp_thread = threading.Thread(
+        target=serve_socket,
+        args=(tcp_server, f"{args.tcp_host}:{args.tcp_port}", responder),
+        daemon=True,
+    )
+    threads.append(tcp_thread)
+
+    for thread in threads:
+        thread.start()
+
+    print(f"[server] Avro RPC server is running ({args.protocol})", flush=True)
+    if not args.no_unix:
+        print(f"[server] Unix: {args.unix_socket}", flush=True)
+    print(f"[server] TCP:   {args.tcp_host}:{args.tcp_port}", flush=True)
 
     try:
-        unix_thread.join()
-        tcp_thread.join()
+        for thread in threads:
+            thread.join()
 
     except KeyboardInterrupt:
         print("\n[server] shutting down", flush=True)
-        unix_server.close()
-        tcp_server.close()
-        if os.path.exists(UNIX_SOCKET):
-            os.unlink(UNIX_SOCKET)
+        for server in servers:
+            server.close()
+        if not args.no_unix and os.path.exists(args.unix_socket):
+            os.unlink(args.unix_socket)
 
 
 if __name__ == "__main__":

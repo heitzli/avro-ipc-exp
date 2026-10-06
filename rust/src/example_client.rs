@@ -21,9 +21,21 @@ impl<T: Transport> ExampleServiceClient<T> {
      */
 
     pub fn new(transport: T) -> ClientResult<Self> {
-        let rpc = AvroRpcClient::new(transport, PROTOCOL)?;
+        Self::with_protocol(transport, PROTOCOL)
+    }
+
+    pub fn with_protocol(transport: T, protocol_text: &str) -> ClientResult<Self> {
+        let rpc = AvroRpcClient::new(transport, protocol_text)?;
 
         Ok(Self { rpc })
+    }
+
+    pub fn last_handshake_match(&self) -> Option<&str> {
+        self.rpc.last_handshake_match()
+    }
+
+    pub fn has_peer_protocol(&self) -> bool {
+        self.rpc.has_peer_protocol()
     }
 
     /*
@@ -105,6 +117,27 @@ impl<T: Transport> ExampleServiceClient<T> {
         Self::extract_test_response(response)
     }
 
+    /// v2 request including evolved field `c`.
+    pub fn test_v2(&mut self, a: i32, b: i32, c: &str) -> ClientResult<(i32, Option<String>)> {
+        let request = Value::Record(vec![(
+            "request".to_string(),
+            Value::Record(vec![
+                ("a".to_string(), Value::Int(a)),
+                ("b".to_string(), Value::Int(b)),
+                ("c".to_string(), Value::String(c.to_string())),
+            ]),
+        )]);
+
+        let response = self.rpc.call("test", request)?;
+
+        Self::extract_test_response_with_note(response)
+    }
+
+    /// Low-level escape hatch for evolution tests (partial records, etc.).
+    pub fn call_raw(&mut self, method: &str, request: Value) -> ClientResult<Value> {
+        self.rpc.call(method, request)
+    }
+
     /*
      * ======================================================================
      * Extract echo response
@@ -158,22 +191,42 @@ impl<T: Transport> ExampleServiceClient<T> {
     }
 
     fn extract_test_response(response: Value) -> ClientResult<i32> {
+        Self::extract_test_response_with_note(response).map(|(result, _)| result)
+    }
+
+    fn extract_test_response_with_note(response: Value) -> ClientResult<(i32, Option<String>)> {
         match response {
             Value::Record(fields) => {
-                for (name, value) in fields {
-                    if name == "result" {
-                        if let Value::Int(result) = value {
-                            return Ok(result);
-                        }
+                let mut result = None;
+                let mut note = None;
 
-                        return Err("add response field 'result' has invalid type".into());
+                for (name, value) in fields {
+                    match name.as_str() {
+                        "result" => {
+                            if let Value::Int(v) = value {
+                                result = Some(v);
+                            } else {
+                                return Err("test response field 'result' has invalid type".into());
+                            }
+                        }
+                        "note" => {
+                            if let Value::String(v) = value {
+                                note = Some(v);
+                            } else {
+                                return Err("test response field 'note' has invalid type".into());
+                            }
+                        }
+                        _ => {}
                     }
                 }
 
-                Err("add response missing 'result' field".into())
+                match result {
+                    Some(result) => Ok((result, note)),
+                    None => Err("test response missing 'result' field".into()),
+                }
             }
 
-            other => Err(format!("invalid add response: {other:?}").into()),
+            other => Err(format!("invalid test response: {other:?}").into()),
         }
     }
 
