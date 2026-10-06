@@ -87,7 +87,7 @@ impl Transport for UnixTransport {
  * currently send the complete message as one buffer.
  */
 
-fn write_framed_message<W: Write>(writer: &mut W, message: &[u8]) -> TransportResult<()> {
+pub fn write_framed_message<W: Write>(writer: &mut W, message: &[u8]) -> TransportResult<()> {
     let length = u32::try_from(message.len())?;
     writer.write_all(&length.to_be_bytes())?;
     writer.write_all(message)?;
@@ -96,7 +96,7 @@ fn write_framed_message<W: Write>(writer: &mut W, message: &[u8]) -> TransportRe
     Ok(())
 }
 
-fn read_framed_message<R: Read>(reader: &mut R) -> TransportResult<Vec<u8>> {
+pub fn read_framed_message<R: Read>(reader: &mut R) -> TransportResult<Vec<u8>> {
     let mut result = Vec::new();
 
     loop {

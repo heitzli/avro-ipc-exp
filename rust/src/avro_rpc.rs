@@ -16,7 +16,7 @@ type RpcResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
  * ==========================================================================
  */
 
-const HANDSHAKE_REQUEST_SCHEMA_JSON: &str = r#"
+pub const HANDSHAKE_REQUEST_SCHEMA_JSON: &str = r#"
 {
   "type": "record",
   "name": "HandshakeRequest",
@@ -66,7 +66,7 @@ const HANDSHAKE_REQUEST_SCHEMA_JSON: &str = r#"
  * ==========================================================================
  */
 
-const HANDSHAKE_RESPONSE_SCHEMA_JSON: &str = r#"
+pub const HANDSHAKE_RESPONSE_SCHEMA_JSON: &str = r#"
 {
   "type": "record",
   "name": "HandshakeResponse",
@@ -129,7 +129,7 @@ const HANDSHAKE_RESPONSE_SCHEMA_JSON: &str = r#"
  * ==========================================================================
  */
 
-const MAP_BYTES_SCHEMA_JSON: &str = r#"
+pub const MAP_BYTES_SCHEMA_JSON: &str = r#"
 {
   "type": "map",
   "values": "bytes"
@@ -154,6 +154,7 @@ struct AvroMessage {
  * ==========================================================================
  */
 
+#[derive(Debug, Clone)]
 pub struct AvroProtocol {
     /*
      * Exact protocol JSON text.
