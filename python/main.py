@@ -29,9 +29,9 @@ PROTOCOL = load_protocol(PROTOCOL_FILE)
 
 
 def _record_has_field(protocol: avro.protocol.Protocol, record: str, field: str) -> bool:
-    for schema in protocol.types:
+    for schema in protocol.types:  # type: ignore
         if getattr(schema, "fullname", "") in (record, f"example.{record}"):
-            return any(f.name == field for f in schema.fields)
+            return any(f.name == field for f in schema.fields)  # type: ignore
     return False
 
 
@@ -41,9 +41,7 @@ class ExampleResponder(avro.ipc.Responder):
         # Python's DatumWriter validates strictly: extra keys raise
         # AvroTypeException. Only send `note` when the local (writer)
         # response schema actually declares it (v2).
-        self._test_response_has_note = _record_has_field(
-            self.local_protocol, "TestResponse", "note"
-        )
+        self._test_response_has_note = _record_has_field(self.local_protocol, "TestResponse", "note")
 
     def invoke(self, local_message: avro.protocol.Message, request: RequestDict):  # type: ignore
         method = local_message.name
@@ -134,9 +132,7 @@ class FramedSocket:
 _responder_protocol: avro.protocol.Protocol = PROTOCOL
 
 
-def handle_connection(
-    sock: socket.socket, address: str, responder: ExampleResponder | None = None
-) -> None:
+def handle_connection(sock: socket.socket, address: str, responder: ExampleResponder | None = None) -> None:
     print(f"[server] connection from {address}", flush=True)
     framed_socket = FramedSocket(sock)
     reader = avro.ipc.FramedReader(framed_socket)
@@ -172,9 +168,7 @@ def serve_socket(server_sock: socket.socket, name: str, responder: ExampleRespon
 
     while True:
         client_sock, address = server_sock.accept()
-        thread = threading.Thread(
-            target=handle_connection, args=(client_sock, address, responder), daemon=True
-        )
+        thread = threading.Thread(target=handle_connection, args=(client_sock, address, responder), daemon=True)
         thread.start()
 
 
