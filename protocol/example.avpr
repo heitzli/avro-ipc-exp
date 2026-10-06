@@ -1,34 +1,48 @@
 {
-  "protocol": "ExampleService",
+  "messages": {
+    "add": {
+      "request": [
+        {
+          "name": "request",
+          "type": "AddRequest"
+        }
+      ],
+      "response": "AddResponse"
+    },
+    "echo": {
+      "request": [
+        {
+          "name": "request",
+          "type": "EchoRequest"
+        }
+      ],
+      "response": "EchoResponse"
+    }
+  },
   "namespace": "example",
-
+  "protocol": "ExampleService",
   "types": [
     {
-      "type": "record",
+      "fields": [
+        {
+          "name": "message",
+          "type": "string"
+        }
+      ],
       "name": "EchoRequest",
-      "namespace": "example",
+      "type": "record"
+    },
+    {
       "fields": [
         {
           "name": "message",
           "type": "string"
         }
-      ]
-    },
-    {
-      "type": "record",
+      ],
       "name": "EchoResponse",
-      "namespace": "example",
-      "fields": [
-        {
-          "name": "message",
-          "type": "string"
-        }
-      ]
+      "type": "record"
     },
     {
-      "type": "record",
-      "name": "AddRequest",
-      "namespace": "example",
       "fields": [
         {
           "name": "a",
@@ -38,40 +52,19 @@
           "name": "b",
           "type": "long"
         }
-      ]
+      ],
+      "name": "AddRequest",
+      "type": "record"
     },
     {
-      "type": "record",
-      "name": "AddResponse",
-      "namespace": "example",
       "fields": [
         {
           "name": "result",
           "type": "long"
         }
-      ]
-    }
-  ],
-
-  "messages": {
-    "echo": {
-      "request": [
-        {
-          "name": "request",
-          "type": "example.EchoRequest"
-        }
       ],
-      "response": "example.EchoResponse"
-    },
-
-    "add": {
-      "request": [
-        {
-          "name": "request",
-          "type": "example.AddRequest"
-        }
-      ],
-      "response": "example.AddResponse"
+      "name": "AddResponse",
+      "type": "record"
     }
-  }
+  ]
 }

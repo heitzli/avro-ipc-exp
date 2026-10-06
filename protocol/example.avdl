@@ -1,0 +1,24 @@
+@namespace("example")
+protocol ExampleService {
+
+  record EchoRequest {
+    string message;
+  }
+
+  record EchoResponse {
+    string message;
+  }
+
+  record AddRequest {
+    long a;
+    long b;
+  }
+
+  record AddResponse {
+    long result;
+  }
+
+  EchoResponse echo(EchoRequest request);
+
+  AddResponse add(AddRequest request);
+}
