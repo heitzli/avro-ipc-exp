@@ -10,22 +10,27 @@ use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
-type ServerResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
-
-const PROTOCOL: &str = include_str!("../../protocol/example.avpr");
+pub type ServerResult<T> = Result<T, Box<dyn std::error::Error + Send + Sync>>;
 
 /*
  * ==========================================================================
- * Example Avro RPC responder (server side)
+ * Reusable Avro RPC responder (server side)
  * ==========================================================================
  *
  * Mirrors the Python `avro.ipc.Responder` used by this project:
  *
  *   handshake -> schema resolution (writer = remote, reader = local)
  *   -> dispatch -> strict response encoding.
+ *
+ * All framing/handshake/schema-resolution code here is generic over the
+ * `.avpr` text. Per-protocol code only implements `AvroHandler::invoke`.
  */
 
-pub struct ExampleResponder {
+pub trait AvroHandler: Send + Sync {
+    fn invoke(&self, method: &str, params: &Value) -> ServerResult<Value>;
+}
+
+pub struct AvroResponder<H: AvroHandler> {
     local: Arc<AvroProtocol>,
 
     /*
@@ -36,14 +41,11 @@ pub struct ExampleResponder {
     handshake_request_schema: Schema,
     handshake_response_schema: Schema,
     metadata_schema: Schema,
+    handler: H,
 }
 
-impl ExampleResponder {
-    pub fn new() -> ServerResult<Self> {
-        Self::with_protocol(PROTOCOL)
-    }
-
-    pub fn with_protocol(protocol_text: &str) -> ServerResult<Self> {
+impl<H: AvroHandler> AvroResponder<H> {
+    pub fn from_protocol(protocol_text: &str, handler: H) -> ServerResult<Self> {
         let local = Arc::new(AvroProtocol::parse(protocol_text)?);
 
         Ok(Self {
@@ -52,6 +54,7 @@ impl ExampleResponder {
             handshake_request_schema: Schema::parse_str(HANDSHAKE_REQUEST_SCHEMA_JSON)?,
             handshake_response_schema: Schema::parse_str(HANDSHAKE_RESPONSE_SCHEMA_JSON)?,
             metadata_schema: Schema::parse_str(MAP_BYTES_SCHEMA_JSON)?,
+            handler,
         })
     }
 
@@ -221,7 +224,7 @@ impl ExampleResponder {
          * Dispatch.
          */
 
-        let result = self.invoke(&method, &params)?;
+        let result = self.handler.invoke(&method, &params)?;
 
         /*
          * Encode the result with exactly the local response schema fields.
@@ -241,111 +244,18 @@ impl ExampleResponder {
 
     /*
      * ----------------------------------------------------------------------
-     * Method dispatch
+     * Per-protocol dispatch lives in `AvroHandler::invoke`, not here.
      * ----------------------------------------------------------------------
      */
+}
 
-    fn invoke(&self, method: &str, params: &Value) -> ServerResult<Value> {
-        match method {
-            "echo" => Self::echo(params),
-            "add" => Self::add(params),
-            "test" => Self::test(params),
-            _ => Err(format!("unknown RPC method: {method}").into()),
-        }
-    }
+/*
+ * ======================================================================
+ * Handshake + CallResponse codecs (generic, shared by all protocols)
+ * ======================================================================
+ */
 
-    fn inner(params: &Value) -> ServerResult<&Vec<(String, Value)>> {
-        match params {
-            Value::Record(fields) => {
-                if fields.len() != 1 {
-                    return Err(format!("invalid RPC params wrapper: {params:?}").into());
-                }
-
-                match &fields[0].1 {
-                    Value::Record(inner) => Ok(inner),
-                    other => Err(format!("invalid RPC params record: {other:?}").into()),
-                }
-            }
-            other => Err(format!("invalid RPC params: {other:?}").into()),
-        }
-    }
-
-    fn field<'a>(fields: &'a [(String, Value)], name: &str) -> ServerResult<&'a Value> {
-        fields
-            .iter()
-            .find(|(field_name, _)| field_name == name)
-            .map(|(_, value)| value)
-            .ok_or_else(|| format!("request is missing '{name}' field").into())
-    }
-
-    fn echo(params: &Value) -> ServerResult<Value> {
-        let inner = Self::inner(params)?;
-
-        let message = match Self::field(inner, "message")? {
-            Value::String(message) => message.clone(),
-            other => return Err(format!("echo field 'message' has invalid type: {other:?}").into()),
-        };
-
-        println!("[server] echo({message:?})");
-
-        Ok(Value::Record(vec![(
-            "message".to_string(),
-            Value::String(message),
-        )]))
-    }
-
-    fn add(params: &Value) -> ServerResult<Value> {
-        let inner = Self::inner(params)?;
-
-        let a = match Self::field(inner, "a")? {
-            Value::Long(a) => *a,
-            other => return Err(format!("add field 'a' has invalid type: {other:?}").into()),
-        };
-
-        let b = match Self::field(inner, "b")? {
-            Value::Long(b) => *b,
-            other => return Err(format!("add field 'b' has invalid type: {other:?}").into()),
-        };
-
-        let result = a + b;
-
-        println!("[server] add({a}, {b}) -> {result}");
-
-        Ok(Value::Record(vec![(
-            "result".to_string(),
-            Value::Long(result),
-        )]))
-    }
-
-    fn test(params: &Value) -> ServerResult<Value> {
-        let inner = Self::inner(params)?;
-
-        let a = match Self::field(inner, "a")? {
-            Value::Int(a) => *a,
-            other => return Err(format!("test field 'a' has invalid type: {other:?}").into()),
-        };
-
-        let b = match Self::field(inner, "b")? {
-            Value::Int(b) => *b,
-            other => return Err(format!("test field 'b' has invalid type: {other:?}").into()),
-        };
-
-        let result = a - b;
-
-        println!("[server] test({a}, {b}) -> {result}");
-
-        Ok(Value::Record(vec![(
-            "result".to_string(),
-            Value::Int(result),
-        )]))
-    }
-
-    /*
-     * ======================================================================
-     * Handshake codec
-     * ======================================================================
-     */
-
+impl<H: AvroHandler> AvroResponder<H> {
     fn decode_handshake_request(
         &self,
         cursor: &mut Cursor<&[u8]>,
