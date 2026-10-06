@@ -1,0 +1,37 @@
+{
+  "messages": {
+    "echo": {
+      "request": [
+        {
+          "name": "request",
+          "type": "EchoRequest"
+        }
+      ],
+      "response": "EchoResponse"
+    }
+  },
+  "namespace": "example",
+  "protocol": "EchoService",
+  "types": [
+    {
+      "fields": [
+        {
+          "name": "message",
+          "type": "string"
+        }
+      ],
+      "name": "EchoRequest",
+      "type": "record"
+    },
+    {
+      "fields": [
+        {
+          "name": "message",
+          "type": "string"
+        }
+      ],
+      "name": "EchoResponse",
+      "type": "record"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+@namespace("example")
+protocol EchoService {
+
+  record EchoRequest {
+    string message;
+  }
+
+  record EchoResponse {
+    string message;
+  }
+
+  EchoResponse echo(EchoRequest request);
+}

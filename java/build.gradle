@@ -1,0 +1,26 @@
+plugins {
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'org.apache.avro:avro:1.12.2'
+    implementation 'org.apache.avro:avro-ipc:1.12.2'
+}
+
+application {
+    mainClass = 'ExampleServer'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}
+
+tasks.named('run') {
+    jvmArgs '-Dorg.apache.avro.SERIALIZABLE_PACKAGES=org.apache.avro.ipc'
+}

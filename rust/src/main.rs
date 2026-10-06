@@ -1,0 +1,83 @@
+mod avro_rpc;
+mod example_client;
+mod transport;
+
+use example_client::ExampleServiceClient;
+
+use transport::TcpTransport;
+
+#[cfg(unix)]
+use transport::UnixTransport;
+
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    println!("=== Avro RPC Rust client ===");
+
+    /*
+     * ======================================================================
+     * Unix socket
+     * ======================================================================
+     */
+
+    #[cfg(unix)]
+    {
+        println!();
+        println!("Connecting through Unix socket:");
+        println!("  /tmp/example.sock");
+
+        let transport = UnixTransport::connect("/tmp/example-java.sock")?;
+
+        let mut client = ExampleServiceClient::new(transport)?;
+
+        /*
+         * echo
+         */
+
+        let message = client.echo("hello from Rust")?;
+
+        println!("echo -> {message}");
+
+        /*
+         * add
+         */
+
+        let result = client.add(10, 20)?;
+
+        println!("add -> {result}");
+
+        client.close()?;
+    }
+
+    /*
+     * ======================================================================
+     * TCP
+     * ======================================================================
+     */
+
+    println!();
+    println!("Connecting through TCP:");
+    println!("  127.0.0.1:9000");
+
+    let transport = TcpTransport::connect("127.0.0.1", 9000)?;
+
+    let mut client = ExampleServiceClient::new(transport)?;
+
+    /*
+     * echo
+     */
+
+    let message = client.echo("hello over TCP from Rust")?;
+
+    println!("echo -> {message}");
+
+    /*
+     * add
+     */
+
+    let result = client.add(100, 200)?;
+
+    println!("add -> {result}");
+
+    client.close()?;
+
+    Ok(())
+}
